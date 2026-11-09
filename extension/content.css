@@ -1,0 +1,678 @@
+[data-cw-card] {
+  cursor: grab;
+  -moz-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+/* Color tags: a stripe along the bottom edge. An inset shadow paints over
+   the tile's own background (selected or not) without changing its layout. */
+[data-cw-card][data-cw-tag="yellow"] { --cw-tag: #f9df6d; }
+[data-cw-card][data-cw-tag="green"]  { --cw-tag: #a0c35a; }
+[data-cw-card][data-cw-tag="blue"]   { --cw-tag: #b0c4ef; }
+[data-cw-card][data-cw-tag="purple"] { --cw-tag: #ba81c5; }
+
+[data-cw-card][data-cw-tag] {
+  box-shadow: inset 0 -8px 0 var(--cw-tag);
+}
+
+/* Keep the stripe visible while the tile is being dragged. */
+[data-cw-card][data-cw-dragging] {
+  cursor: grabbing;
+  opacity: 0.85;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3), inset 0 -8px 0 var(--cw-tag, transparent);
+}
+
+[data-cw-card][data-cw-over] {
+  outline: 3px dashed #5a594e;
+  outline-offset: -3px;
+}
+
+/* Dark target (e.g. a selected tile): use the page's light tile grey */
+[data-cw-card][data-cw-over][data-cw-dark] {
+  outline-color: #efefe6;
+}
+
+/* Tag gesture overlay: four colored quadrants drawn over the tile while the
+   right button is held. Drag into one and release to pick it. */
+[data-cw-quad] {
+  position: fixed;
+  z-index: 2147483647;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  -moz-user-select: none;
+  user-select: none;
+}
+
+[data-cw-quadrant] {
+  opacity: 0.6;
+  transition: opacity 60ms;
+}
+[data-cw-quadrant="yellow"] { background: #f9df6d; }
+[data-cw-quadrant="green"]  { background: #a0c35a; }
+[data-cw-quadrant="blue"]   { background: #b0c4ef; }
+[data-cw-quadrant="purple"] { background: #ba81c5; }
+
+/* The quadrant under the pointer goes fully opaque. */
+[data-cw-quad][data-cw-hot="yellow"] [data-cw-quadrant="yellow"],
+[data-cw-quad][data-cw-hot="green"]  [data-cw-quadrant="green"],
+[data-cw-quad][data-cw-hot="blue"]   [data-cw-quadrant="blue"],
+[data-cw-quad][data-cw-hot="purple"] [data-cw-quadrant="purple"] {
+  opacity: 1;
+}
+
+/* --- Toolbar: clock + history + dark toggle ---
+   Lives inside the board (see placeBar): on NYT, right-aligned on the
+   "Create four groups of four!" heading row; elsewhere just above the
+   board wrapper's top-right corner. Absolutely positioned, so the game's
+   layout doesn't move, and stacked with the page (overlays cover it). */
+[data-cw-bar-host] { position: relative; }
+[data-cw-bar] {
+  position: absolute;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  transform: translateY(-50%); /* top = heading's vertical center */
+  font: 600 12px/1 nyt-franklin, helvetica, arial, sans-serif;
+  color: #5a594e;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+/* Too narrow for the heading row: sit just above the heading instead. */
+[data-cw-bar][data-stack] { transform: translateY(-100%); }
+[data-cw-bar-host][data-cw-stacked] { margin-top: 34px; }
+/* No NYT heading (dev harness): just above the wrapper's top-right. */
+[data-cw-bar][data-mode='above'] {
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform: none;
+}
+
+[data-cw-clock] {
+  font: inherit;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(90, 89, 78, 0.08);
+  cursor: pointer;
+}
+
+/* Tiny restore button shown while the clock is hidden. */
+[data-cw-clock-show] {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 5px 6px;
+  cursor: pointer;
+  opacity: 0.35;
+}
+[data-cw-clock-show]:hover { opacity: 1; }
+
+[data-cw-dark-toggle],
+[data-cw-history-btn] {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+[data-cw-dark-toggle]:hover,
+[data-cw-history-btn]:hover { opacity: 1; }
+
+/* History sidebar docked on the right edge: finished puzzles with their
+   date and accumulated time. */
+[data-cw-history-panel] {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483647;
+  width: 220px;
+  height: 100vh;
+  overflow-y: auto;
+  background: #fff;
+  color: #121212;
+  border-left: 1px solid #dcdcd4;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  font: 13px/1.4 nyt-franklin, helvetica, arial, sans-serif;
+  padding-bottom: 8px;
+  overflow-x: hidden;
+}
+html[data-cw-dark] [data-cw-history-panel] {
+  background: #1b1b1b;
+  color: #f8f8f8;
+  border-left-color: #3a3a3c;
+}
+[data-cw-hist-head] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 14px 10px;
+  font-weight: 700;
+  font-size: 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  position: sticky;
+  top: 0;
+  /* Rows are position:relative, so without this they paint over it. */
+  z-index: 1;
+  background: inherit;
+}
+[data-cw-hist-head] > span { flex: 1; }
+[data-cw-hist-head] button {
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+[data-cw-hist-head] button:hover { opacity: 1; }
+[data-cw-history-panel] .searchwrap { padding: 8px 14px 4px; }
+/* export / import / clear, under the search box */
+[data-cw-history-panel] .tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 4px 14px 8px;
+}
+[data-cw-history-panel] .tools button {
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+[data-cw-history-panel] .tools button:hover { opacity: 1; }
+[data-cw-history-panel] .tools button:disabled { opacity: 0.35; cursor: default; }
+/* Stats: played / won / perfect / avg win / best / streak, in a 3x2 grid. */
+[data-cw-history-panel] .stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 0 14px 10px;
+  padding: 8px 6px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.09);
+  text-align: center;
+}
+[data-cw-history-panel] .stats b {
+  display: block;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+[data-cw-history-panel] .stats span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.65;
+}
+/* Per-puzzle result next to the date. */
+[data-cw-hist-row] .result {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+[data-cw-hist-row] .result.won { color: #5f8a24; }
+[data-cw-hist-row] .result.lost { color: #c0392b; }
+html[data-cw-dark] [data-cw-hist-row] .result.won { color: #a0c35a; }
+html[data-cw-dark] [data-cw-hist-row] .result.lost { color: #ff7a6b; }
+/* Debug menu (⋯ in the header): maintenance tools such as "check". */
+[data-cw-hist-head] .dbg-toggle { padding: 1px 8px; letter-spacing: 1px; }
+[data-cw-hist-head] .dbg-toggle[aria-expanded='true'] { opacity: 1; }
+[data-cw-history-panel] .debug {
+  margin: 0 14px 10px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(128, 128, 128, 0.55);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+}
+[data-cw-history-panel] .debug-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.7;
+}
+[data-cw-history-panel] .debug-note { opacity: 0.7; line-height: 1.35; }
+[data-cw-history-panel] .debug button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+[data-cw-history-panel] .debug button:hover { opacity: 1; }
+[data-cw-history-panel] .debug button:disabled { opacity: 0.35; cursor: default; }
+[data-cw-history-panel] .debug-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+[data-cw-history-panel] .debug-since { display: inline-flex; align-items: center; gap: 4px; }
+[data-cw-history-panel] .debug-since input {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.55);
+  border-radius: 6px;
+  padding: 1px 4px;
+  color-scheme: light dark;
+}
+[data-cw-history-panel] .status {
+  padding: 0 14px 8px;
+  font-size: 11px;
+  color: #787c7e;
+}
+[data-cw-history-panel] .searchwrap input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 999px;
+  padding: 5px 12px;
+  outline: none;
+}
+[data-cw-history-panel] .searchwrap input:focus {
+  border-color: #ba81c5;
+}
+[data-cw-hist-row] {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+}
+[data-cw-hist-row]:hover { background: rgba(128, 128, 128, 0.08); }
+[data-cw-hist-row].link { cursor: pointer; }
+[data-cw-hist-row].empty {
+  color: #787c7e;
+  border-bottom: 0;
+}
+[data-cw-hist-row] .left { flex: 1; min-width: 0; }
+[data-cw-hist-row] .date { font-weight: 600; }
+[data-cw-hist-row].current { background: rgba(186, 129, 197, 0.08); }
+[data-cw-hist-row] .badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ba81c5;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  vertical-align: 1px;
+}
+[data-cw-hist-row] .left { min-width: 0; }
+[data-cw-hist-row] .times {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #787c7e;
+  font-variant-numeric: tabular-nums;
+}
+[data-cw-hist-row] .guesses {
+  display: none;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  width: 100%;
+}
+[data-cw-hist-row] .guess { width: 100%; }
+[data-cw-hist-row].open .guesses { display: flex; }
+/* The row's corner buttons (delete, open, copy) sit at its bottom right;
+   an expanded row's guesses reach that corner, so leave a strip for them. */
+[data-cw-hist-row].open { padding-bottom: 28px; }
+[data-cw-hist-row].has-guesses { cursor: pointer; }
+[data-cw-hist-row] .chev::before { content: '▸'; margin-right: 4px; }
+[data-cw-hist-row].open .chev::before { content: '▾'; }
+[data-cw-hist-row] .guess {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(128, 128, 128, 0.09);
+  border-radius: 6px;
+}
+[data-cw-hist-row] .guess[data-color] { border-left: 4px solid transparent; }
+[data-cw-hist-row] .guess[data-color='yellow'] { border-left-color: #f9df6d; }
+[data-cw-hist-row] .guess[data-color='green']  { border-left-color: #a0c35a; }
+[data-cw-hist-row] .guess[data-color='blue']   { border-left-color: #b0c4ef; }
+[data-cw-hist-row] .guess[data-color='purple'] { border-left-color: #ba81c5; }
+[data-cw-hist-row] .guess[data-color='solved'] { border-left-color: #787c7e; }
+[data-cw-hist-row] .chip[data-color] { color: #121212; }
+[data-cw-hist-row] .chip[data-color='yellow'] { background: #f9df6d; }
+[data-cw-hist-row] .chip[data-color='green']  { background: #a0c35a; }
+[data-cw-hist-row] .chip[data-color='blue']   { background: #b0c4ef; }
+[data-cw-hist-row] .chip[data-color='purple'] { background: #ba81c5; }
+html[data-cw-dark] [data-cw-hist-row] .chip[data-color] {
+  background: inherit;
+  color: #121212;
+}
+html[data-cw-dark] [data-cw-hist-row] .chip[data-color='yellow'] { background: #f9df6d; }
+html[data-cw-dark] [data-cw-hist-row] .chip[data-color='green']  { background: #a0c35a; }
+html[data-cw-dark] [data-cw-hist-row] .chip[data-color='blue']   { background: #b0c4ef; }
+html[data-cw-dark] [data-cw-hist-row] .chip[data-color='purple'] { background: #ba81c5; }
+[data-cw-hist-row] .view {
+  position: absolute;
+  right: 30px;
+  bottom: 8px;
+  font: inherit;
+  font-size: 12px;
+  color: #787c7e;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.6;
+}
+[data-cw-hist-row] .view:hover { opacity: 1; }
+[data-cw-hist-row] .copy {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  font: inherit;
+  font-size: 12px;
+  color: #787c7e;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.6;
+}
+[data-cw-hist-row] .copy:hover { opacity: 1; }
+/* Per-row delete: only visible while hovering the row. */
+[data-cw-hist-row] .del {
+  position: absolute;
+  right: 52px;
+  bottom: 8px;
+  font: inherit;
+  font-size: 11px;
+  color: #787c7e;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+[data-cw-hist-row]:hover .del,
+[data-cw-hist-row] .del:focus-visible { opacity: 0.6; }
+[data-cw-hist-row] .del:hover { opacity: 1; color: #d0342c; }
+[data-cw-hist-row] .chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1.75 / 1;
+  background: #efefe6;
+  color: #121212;
+  border-radius: 6px;
+  padding: 2px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  overflow: hidden;
+}
+/* Plain chips only: replica tiles size their pictures like NYT does. */
+[data-cw-hist-row] .chip:not(.replica) img {
+  display: block;
+  max-width: 70%;
+  max-height: 70%;
+  object-fit: contain;
+}
+html[data-cw-dark] [data-cw-hist-row] .chip {
+  background: #3a3a3c;
+  color: #f8f8f8;
+}
+
+/* Replica tiles: an exact copy of the game tile (structure + computed
+   layout/typography inlined by snapshotTile), zoomed to fit the cell by
+   JS. Only colors come from here: the board's live neutral tile color
+   (--cw-tile-*, set from an on-screen tile), or the category color. */
+[data-cw-hist-row] .chip.replica,
+html[data-cw-dark] [data-cw-hist-row] .chip.replica {
+  display: block;
+  aspect-ratio: auto;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+  letter-spacing: normal;
+  min-width: 0;
+}
+[data-cw-hist-row] .chip.replica [data-cw-tile] {
+  background: var(--cw-tile-bg, #efefe6);
+  color: var(--cw-tile-fg, #121212);
+}
+/* :where() keeps the theme rule from outranking the category colors. */
+:where(html[data-cw-dark]) [data-cw-hist-row] .chip.replica [data-cw-tile] {
+  background: var(--cw-tile-bg, #cfcfbf);
+  color: var(--cw-tile-fg, #121212);
+}
+[data-cw-hist-row] .chip.replica[data-color] [data-cw-tile] { color: #121212; }
+[data-cw-hist-row] .chip.replica[data-color='yellow'] [data-cw-tile] { background: #f9df6d; }
+[data-cw-hist-row] .chip.replica[data-color='green'] [data-cw-tile] { background: #a0c35a; }
+[data-cw-hist-row] .chip.replica[data-color='blue'] [data-cw-tile] { background: #b0c4ef; }
+[data-cw-hist-row] .chip.replica[data-color='purple'] [data-cw-tile] { background: #ba81c5; }
+
+/* "One away" guesses: a dashed outline and a label under the tiles. */
+[data-cw-hist-row] .guess.one-away {
+  outline: 1px dashed rgba(128, 128, 128, 0.7);
+  outline-offset: -1px;
+}
+/* Category name above a correct group's tiles. */
+[data-cw-hist-row] .guess .cat {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  text-align: center;
+}
+[data-cw-hist-row] .guess .note {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.75;
+  text-align: center;
+}
+[data-cw-hist-row] .meta {
+  color: #787c7e;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Clear-history confirm popover. Preferred placement is out to the LEFT of
+   the sidebar (arrow pointing right at the clear button); falls back to
+   below the button when there's no room. */
+[data-cw-confirm] {
+  position: fixed;
+  z-index: 2147483647;
+  width: 190px;
+  background: #fff;
+  color: #121212;
+  border: 1px solid #c9c9c0;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  padding: 10px 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: center;
+}
+[data-cw-confirm]::before {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+}
+/* Arrow pointing up (below mode). */
+[data-cw-confirm][data-side='below']::before {
+  top: -5px;
+  left: var(--arrow-x, 50%);
+  margin-left: -5px;
+  transform: rotate(45deg);
+  border-left: 1px solid #c9c9c0;
+  border-top: 1px solid #c9c9c0;
+}
+/* Arrow pointing right (left-of-sidebar mode). */
+[data-cw-confirm][data-side='left']::before {
+  right: -6px;
+  top: var(--arrow-y, 24px);
+  margin-top: -5px;
+  transform: rotate(45deg);
+  border-top: 1px solid #c9c9c0;
+  border-right: 1px solid #c9c9c0;
+}
+html[data-cw-dark] [data-cw-confirm] {
+  background: #242424;
+  color: #f8f8f8;
+  border-color: #4a4a4e;
+}
+html[data-cw-dark] [data-cw-confirm][data-side='below']::before {
+  border-color: #4a4a4e;
+}
+html[data-cw-dark] [data-cw-confirm][data-side='left']::before {
+  border-color: #4a4a4e;
+}
+[data-cw-confirm] .msg {
+  font-weight: 700;
+  text-transform: lowercase;
+}
+[data-cw-confirm] .btns {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+[data-cw-confirm] button {
+  font: inherit;
+  font-weight: 700;
+  text-transform: lowercase;
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+[data-cw-confirm] .yes {
+  background: #ba81c5;
+  color: #fff;
+  border: 0;
+}
+[data-cw-confirm] .no {
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+}
+
+html[data-cw-dark] [data-cw-bar] { color: #f8f8f8; }
+html[data-cw-dark] [data-cw-clock] { background: rgba(248, 248, 248, 0.12); }
+
+/* --- Dark mode ---
+   NYT's own dark palette is keyed on body[data-mode="dark"], which content.js
+   sets. The rules below only cover what NYT leaves out (page background and
+   color-scheme), plus the data-cw-dark-fallback set: applied only when the
+   page still computes light colors after dark is switched on, i.e. NYT's
+   dark CSS never loaded. */
+html[data-cw-dark], html[data-cw-dark] body {
+  color-scheme: dark;
+}
+html[data-cw-dark] body {
+  background: #121212;
+}
+
+/* The site header (nav, NYT logo, title bar) is not part of the game's dark
+   palette — NYT's dark CSS never covers it, so patch it whenever dark is on. */
+html[data-cw-dark] .pz-nav,
+html[data-cw-dark] .pz-nav__title,
+html[data-cw-dark] .pz-game-title-bar,
+html[data-cw-dark] .pz-game-title-bar * { color: #f8f8f8 !important; }
+html[data-cw-dark] .pz-nav__logo rect { fill: transparent !important; }
+html[data-cw-dark] .pz-nav__logo path { fill: #f8f8f8 !important; }
+html[data-cw-dark] .pz-nav__hamburger-inner,
+html[data-cw-dark] .pz-nav__hamburger-inner::before,
+html[data-cw-dark] .pz-nav__hamburger-inner::after {
+  background-color: #f8f8f8 !important;
+}
+html[data-cw-dark] .pz-nav :is(a, button):not(.pz-nav__button):not(.pz-nav-drawer *) {
+  color: #f8f8f8 !important;
+  border-color: #f8f8f8 !important;
+}
+/* Other logo shapes the classes above don't catch. */
+html[data-cw-dark] [class*="logo" i] svg rect { fill: transparent !important; }
+html[data-cw-dark] [class*="logo" i] svg path { fill: #f8f8f8 !important; }
+html[data-cw-dark] img[src*="logo" i],
+html[data-cw-dark] img[alt*="New York Times" i] { filter: invert(1); }
+
+/* The site footer is likewise outside the game's dark palette. */
+html[data-cw-dark] .pz-footer {
+  background: #121212 !important;
+  color: #d7d8dc !important;
+}
+html[data-cw-dark] .pz-footer__section-header { color: #f8f8f8 !important; }
+html[data-cw-dark] .pz-footer :is(a, a:visited) { color: #d7d8dc !important; }
+html[data-cw-dark] .pz-footer .pz-icon { color: #d7d8dc !important; }
+
+html[data-cw-dark-fallback] body,
+html[data-cw-dark-fallback] .pz-nav {
+  background: #121212 !important;
+}
+html[data-cw-dark-fallback] [data-cw-card] {
+  background: #3a3a3c !important;
+  color: #f8f8f8 !important;
+}
+/* Selected tiles keep a slightly lighter dark grey. */
+html[data-cw-dark-fallback] [data-cw-card][class*="selected"],
+html[data-cw-dark-fallback] [data-cw-card]:has(input:checked) {
+  background: #565758 !important;
+}
+/* Buttons and other ink on the board that NYT would have restyled. */
+html[data-cw-dark-fallback] button {
+  color: #f8f8f8;
+  border-color: #565758;
+}
+
+/* --- Debug HUD (enabled via ?cwdebug or localStorage['cw-debug']='1') --- */
+[data-cw-hud] {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2147483647;
+  max-width: 46ch;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font: 11px/1.45 ui-monospace, consolas, monospace;
+  color: #d6ffd6;
+  background: rgba(16, 20, 16, 0.92);
+  border: 1px solid #3a3a3c;
+  border-radius: 6px;
+  padding: 8px 10px;
+  -moz-user-select: text;
+  user-select: text;
+}

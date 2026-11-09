@@ -1,0 +1,1161 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Connextras — dev harness</title>
+<link rel="stylesheet" href="../extension/content.css">
+<style>
+  /* Mock of the NYT Connections board: labels + hidden checkboxes, like
+     the real Card component. Loaded alongside the real content.css/js so
+     the extension behaves exactly as it does on nytimes.com. */
+  body {
+    font: 14px/1.4 nyt-franklin, helvetica, arial, sans-serif;
+    background: #fff;
+    color: #121212;
+    margin: 0;
+    padding: 16px;
+  }
+  header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #controls button, #controls select, header button {
+    font: 600 12px/1 inherit;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid #5a594e;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  #board-wrap { margin-top: 48px; }
+  /* Like the real page: solved rows are siblings above the card grid, so
+     the grid's top edge slides down as categories are solved. */
+  #board {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: max-content;
+  }
+  #solved { display: flex; flex-direction: column; gap: 8px; }
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(4, 140px);
+    gap: 8px;
+  }
+  label.card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 80px;
+    border-radius: 8px;
+    background: #efefe6;
+    color: #121212;
+    font-weight: 700;
+    font-size: 15px;
+    text-transform: uppercase;
+    cursor: pointer;
+    text-align: center;
+    padding: 4px;
+    box-sizing: border-box;
+    position: relative;
+  }
+  label.card img { width: 56px; height: 56px; }
+  label.card .vh {
+    position: absolute;
+    width: 1px; height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  label.card.card_selected, label.card:has(input:checked) {
+    background: #5a594e;
+    color: #f8f8f8;
+  }
+  .solved {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 80px;
+    border-radius: 8px;
+    font-weight: 700;
+    color: #121212;
+  }
+  .solved.yellow { background: #f9df6d; }
+  .solved.green  { background: #a0c35a; }
+  .solved.blue   { background: #b0c4ef; }
+  .solved.purple { background: #ba81c5; }
+
+  /* Mimic of NYT's own dark palette, keyed on the same body attributes the
+     site uses. Unchecking "native dark CSS" below disables this block so
+     the extension's adaptive fallback can be tested instead. */
+</style>
+<style id="native-dark">
+  body[data-mode="dark"] { background: #121212; color: #f8f8f8; }
+  body[data-mode="dark"] label.card { background: #3a3a3c; color: #f8f8f8; }
+  body[data-mode="dark"] label.card.card_selected,
+  body[data-mode="dark"] label.card:has(input:checked) { background: #565758; }
+  body[data-mode="dark"] #controls button,
+  body[data-mode="dark"] header button,
+  body[data-mode="dark"] select { color: #f8f8f8; border-color: #565758; }
+</style>
+<style>
+  #panel {
+    position: fixed;
+    top: 16px; right: 16px;
+    width: 380px;
+    max-height: calc(100vh - 32px);
+    overflow: auto;
+    background: #101410;
+    color: #d6ffd6;
+    border: 1px solid #3a3a3c;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: 11px/1.5 ui-monospace, consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #panel h1 { font-size: 12px; margin: 0 0 6px; color: #fff; }
+  #panel .pass { color: #7ee787; }
+  #panel .fail { color: #ff7b72; }
+</style>
+</head>
+<body>
+<header>
+  <strong>dev harness</strong>
+  <div id="controls">
+    <select id="variant">
+      <option value="words">Words (normal)</option>
+      <option value="emoji">Emoji tiles (text)</option>
+      <option value="images">Images (img + alt)</option>
+      <option value="images-noid">Images, no for/id</option>
+    </select>
+    <button id="new-board">New board</button>
+    <button id="shuffle">Shuffle</button>
+    <button id="deselect">Deselect all</button>
+    <button id="submit">Submit</button>
+  </div>
+  <label><input type="checkbox" id="native-dark-css" checked> native dark CSS</label>
+</header>
+
+<div id="board-wrap"><div id="board"><div id="solved"></div><div id="grid"></div></div></div>
+
+<aside id="panel"></aside>
+
+<script src="../extension/content.js"></script>
+<script>
+(() => {
+  const board = document.getElementById('board');
+  const grid = document.getElementById('grid');
+  const solved = document.getElementById('solved');
+  const panel = document.getElementById('panel');
+  const GROUP_COLORS = ['yellow', 'green', 'blue', 'purple'];
+  let solvedCount = 0;
+
+  const WORDS = [
+    'BREAD', 'BACON', 'LETTUCE', 'CHEESE',
+    'PLANE', 'RAIN', 'TRAIN', 'BRAIN',
+    'ALIEN', 'SCREAM', 'DRACULA', 'SAW',
+    'BEE', 'VAMPIRE', 'TEAPOT', 'EYE',
+  ];
+  const EMOJI = [
+    '🍞', '🥓', '🥬', '🧀',
+    '✈️', '🌧️', '🚂', '🧠',
+    '👽', '😱', '🧛', '🪚',
+    '🐝', '🩸', '🫖', '👁️',
+  ];
+  const imgTile = (i) => {
+    const hue = (i * 47) % 360;
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+      `<rect width="64" height="64" rx="10" fill="hsl(${hue},60%,55%)"/>` +
+      `<circle cx="32" cy="32" r="16" fill="hsl(${(hue + 90) % 360},70%,75%)"/></svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  };
+
+  function buildBoard(variant) {
+    solvedCount = 0;
+    grid.innerHTML = '';
+    solved.innerHTML = '';
+    for (let i = 0; i < 16; i++) {
+      const label = document.createElement('label');
+      label.className = 'card';
+      label.setAttribute('data-testid', 'card-label');
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'vh';
+      const noIds = variant === 'images-noid';
+      if (!noIds) {
+        input.id = `inner-card-${i}`;
+        label.htmlFor = input.id;
+      }
+      label.appendChild(input);
+      if (variant === 'images' || variant === 'images-noid') {
+        label.setAttribute('aria-label', WORDS[i]);
+        const img = document.createElement('img');
+        img.src = imgTile(i);
+        img.alt = WORDS[i];
+        label.appendChild(img);
+      } else {
+        const span = document.createElement('span');
+        span.textContent = variant === 'emoji' ? EMOJI[i] : WORDS[i];
+        label.appendChild(span);
+      }
+      grid.appendChild(label);
+    }
+  }
+
+  // NYT reflects selection as a class on the card.
+  grid.addEventListener('change', (e) => {
+    const label = e.target.closest('label');
+    if (label) label.classList.toggle('card_selected', e.target.checked);
+  });
+
+  document.getElementById('new-board').addEventListener('click', () =>
+    buildBoard(document.getElementById('variant').value)
+  );
+  document.getElementById('variant').addEventListener('change', (e) =>
+    buildBoard(e.target.value)
+  );
+
+  document.getElementById('shuffle').addEventListener('click', () => {
+    [...grid.children]
+      .filter((el) => el.matches('label'))
+      .sort(() => Math.random() - 0.5)
+      .forEach((el) => grid.appendChild(el));
+  });
+
+  document.getElementById('deselect').addEventListener('click', () => {
+    grid.querySelectorAll('input:checked').forEach((i) => {
+      i.checked = false;
+      i.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
+  document.getElementById('submit').addEventListener('click', () => {
+    const picked = [...grid.querySelectorAll('label:has(input:checked)')];
+    if (picked.length !== 4 || solvedCount >= 4) return;
+    const names = picked.map(
+      (l) => l.textContent.trim() || l.getAttribute('aria-label')
+    );
+    picked.forEach((l) => l.remove());
+    const row = document.createElement('div');
+    row.className = `solved ${GROUP_COLORS[solvedCount++]}`;
+    row.innerHTML = `<div>CATEGORY ${solvedCount}</div><div>${names.join(', ')}</div>`;
+    solved.append(row);
+  });
+
+  document.getElementById('native-dark-css').addEventListener('change', (e) => {
+    document.getElementById('native-dark').disabled = !e.target.checked;
+  });
+
+  // --- live state panel ---
+  function snapshot() {
+    const cw = window.__cw;
+    if (!cw) return 'content.js not loaded';
+    return [
+      `version: ${cw.version || '(page context)'}`,
+      `cards: ${cw.cards().length}   dark: ${document.body.dataset.mode || '-'}${document.documentElement.hasAttribute('data-cw-dark-fallback') ? ' (fallback)' : ''}`,
+      `keys:  ${cw.keys().join(', ')}`,
+      `order: ${(cw.order() || []).join(', ') || '(untouched)'}`,
+      `tags:  ${[...cw.tags()].map(([k, v]) => `${k}:${v}`).join(' ') || '(none)'}`,
+      `clock: ${(document.querySelector('[data-cw-clock]') || {}).textContent || '-'}`,
+      '',
+      'events:',
+      ...cw.events().slice(-14),
+    ].join('\n');
+  }
+  setInterval(() => {
+    if (selfTest.running) return;
+    panel.innerHTML =
+      (selfTest.lastResults ? `<h1>self-test</h1>${selfTest.lastResults}\n\n` : '') +
+      `<h1>__cw state</h1>` + esc(snapshot());
+  }, 300);
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+  // --- scripted self-test ---
+  const selfTest = { running: false };
+  window.selfTest = selfTest;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const center = (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  };
+  const pev = (type, el, opts) =>
+    el.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        pointerId: 7,
+        isPrimary: true,
+        pointerType: 'mouse',
+        ...opts,
+      })
+    );
+
+  async function runSelfTest() {
+    if (selfTest.running) return;
+    selfTest.running = true;
+    const results = [];
+    const t = (name, ok, extra = '') =>
+      results.push(
+        `<span class="${ok ? 'pass' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</span> ${esc(name)}${extra ? ` — ${esc(extra)}` : ''}`
+      );
+    const cw = window.__cw;
+    try {
+      cw.debug(true);
+      await cw.ready(); // history store loaded
+      await sleep(800); // let tickClock resolve the puzzle + restore state
+
+      // 0. On repeat visits, stored arrangement + tags are restored.
+      const stored = cw.times();
+      // Only a record for this board counts (another variant's record from
+      // an earlier run in the same browser is a different puzzle).
+      const onBoard = new Set(cw.texts());
+      const prev = stored.find(
+        (e) => e.words && e.words.some((w) => onBoard.has(w))
+      );
+      if (prev) {
+        t('arrangement restored from storage', !!cw.order(),
+          cw.order() ? `${cw.order().length} keys` : 'order null');
+        const wantTags = Object.keys(prev.tags || {}).length;
+        t('tags restored from storage', cw.tags().size === wantTags,
+          `${cw.tags().size} vs ${wantTags}`);
+      } else {
+        t('arrangement restored from storage', true, 'skipped (first visit)');
+        t('tags restored from storage', true, 'skipped (first visit)');
+      }
+
+      // 1. A click toggles selection exactly once.
+      const c0 = cw.cards()[0];
+      const was = c0.querySelector('input').checked;
+      let p = center(c0);
+      pev('pointerdown', c0, { button: 0, buttons: 1, clientX: p.x, clientY: p.y });
+      pev('pointerup', c0, { button: 0, buttons: 0, clientX: p.x, clientY: p.y });
+      await sleep(60);
+      t('click toggles selection once', c0.querySelector('input').checked === !was);
+      // undo
+      pev('pointerdown', c0, { button: 0, buttons: 1, clientX: p.x, clientY: p.y });
+      pev('pointerup', c0, { button: 0, buttons: 0, clientX: p.x, clientY: p.y });
+      await sleep(360);
+
+      // 2. Dragging card 0 onto another card's slot swaps them in the visual
+      // order — whichever tile is actually under the drop point (with a
+      // restored arrangement, that's not necessarily a DOM neighbor).
+      const before = cw.order() || cw.keys();
+      const a = cw.cards()[0], b = cw.cards()[2];
+      const pa = center(a), pb = center(b);
+      const kA = cw.keyOf(a);
+      const dropUnder = document.elementFromPoint(pb.x, pb.y);
+      const dropCard = cw.cards().find((c) => c.contains(dropUnder));
+      t('drop point lands on a card', !!dropCard,
+        dropUnder ? `hit ${dropUnder.tagName}` : 'elementFromPoint null');
+      const kDrop = dropCard ? cw.keyOf(dropCard) : null;
+      const iA = before.indexOf(kA);
+      const iDrop = before.indexOf(kDrop);
+      pev('pointerdown', a, { button: 0, buttons: 1, clientX: pa.x, clientY: pa.y });
+      for (let i = 1; i <= 8; i++) {
+        pev('pointermove', document, {
+          button: 0,
+          buttons: 1,
+          clientX: pa.x + ((pb.x - pa.x) * i) / 8,
+          clientY: pa.y + ((pb.y - pa.y) * i) / 8,
+        });
+        await sleep(10);
+      }
+      pev('pointerup', b, { button: 0, buttons: 0, clientX: pb.x, clientY: pb.y });
+      await sleep(60);
+      const ord = cw.order();
+      t(
+        'drag swaps tiles',
+        !!ord && kDrop !== null && ord[iDrop] === kA && ord[iA] === kDrop,
+        `order[${iDrop}]=${ord && ord[iDrop]} want ${kA}`
+      );
+
+      // 3. Right-drag into the top-left quadrant tags the tile yellow.
+      const q = cw.cards()[5];
+      const pq = center(q);
+      const qk = cw.keys()[5];
+      pev('pointerdown', q, { button: 2, buttons: 2, clientX: pq.x, clientY: pq.y });
+      pev('pointermove', document, {
+        button: 2, buttons: 2, clientX: pq.x - 20, clientY: pq.y - 20,
+      });
+      pev('pointerup', q, { button: 2, buttons: 0, clientX: pq.x - 20, clientY: pq.y - 20 });
+      await sleep(60);
+      t('right-drag tags yellow', cw.tags().get(qk) === 'yellow', `got ${cw.tags().get(qk)}`);
+      await sleep(360);
+
+      // 3b. A color tag is the player's guess, not an answer: with no group
+      // solved, a tagged tile must not be read back as its category.
+      const qText = cw.texts()[5];
+      const leaked = cw.tileColors([qText]).get(qText.toUpperCase());
+      t('tag color not read as category', !leaked, leaked ? `got ${leaked}` : '');
+
+      // 4. Plain right-click clears the tag.
+      pev('pointerdown', q, { button: 2, buttons: 2, clientX: pq.x, clientY: pq.y });
+      pev('pointerup', q, { button: 2, buttons: 0, clientX: pq.x, clientY: pq.y });
+      await sleep(60);
+      t('right-click clears tag', !cw.tags().has(qk));
+      await sleep(360);
+
+      // 5. The game's Shuffle button resets our order.
+      document.getElementById('shuffle').click();
+      await sleep(60);
+      t('shuffle resets order', cw.order() === null);
+
+      // 6. Toolbar: clock is running and the dark toggle flips body[data-mode].
+      const clock = document.querySelector('[data-cw-clock]');
+      t('clock visible and ticking', !!clock && /\d+:\d\d/.test(clock.textContent),
+        clock && clock.textContent);
+      const startMode = document.body.dataset.mode;
+      document.querySelector('[data-cw-dark-toggle]').click();
+      await sleep(350);
+      const flipped = document.body.dataset.mode;
+      t('dark toggle flips body[data-mode]',
+        flipped === (startMode === 'dark' ? 'light' : 'dark'),
+        `${startMode} -> ${flipped}`);
+      if (flipped === 'dark') {
+        const tiles = cw.cards();
+        const bg = getComputedStyle(tiles[0]).backgroundColor;
+        const tileDark = bg.match(/\d+/g).slice(0, 3)
+          .reduce((s, v) => s + +v, 0) / 3 < 128;
+        t('tiles render dark', tileDark, bg);
+      }
+      document.querySelector('[data-cw-dark-toggle]').click();
+      await sleep(60);
+      t('toggle restores mode', document.body.dataset.mode === startMode);
+
+      // 7. Clicking the clock hides it; the restore button brings it back.
+      clock.click();
+      await sleep(60);
+      t(
+        'clock hides on click',
+        getComputedStyle(clock).display === 'none' &&
+          !!document.querySelector('[data-cw-clock-show]') &&
+          getComputedStyle(document.querySelector('[data-cw-clock-show]')).display !== 'none'
+      );
+      document.querySelector('[data-cw-clock-show]').click();
+      await sleep(60);
+      t('clock restores', getComputedStyle(clock).display !== 'none');
+      await sleep(360);
+
+      // 8. Solving a group pushes the card grid down but not the toolbar.
+      const bar = document.querySelector('[data-cw-bar]');
+      const topBefore = bar.getBoundingClientRect().top;
+      grid.querySelectorAll('input').forEach((i, n) => {
+        if (n < 4) {
+          i.checked = true;
+          i.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      document.getElementById('submit').click();
+      await sleep(200);
+      const topAfter = bar.getBoundingClientRect().top;
+      t('toolbar stays put after a solve', Math.abs(topAfter - topBefore) < 4,
+        `${topBefore} -> ${topAfter}`);
+
+      // 9. Puzzle record persists in the history store (arrangement + time).
+      const store = cw.times();
+      const entry = store.find((e) => e.words && e.words.length);
+      t('puzzle state persists', !!entry,
+        entry ? `${entry.words.length} words, ${entry.ms}ms` : 'no entry');
+      await sleep(360);
+
+      // 10. Ctrl+Z undoes the last swap. (Move the card at visual index 0
+      // right: position 0 always has a right neighbor. Undo restores the
+      // pre-move state — which may be order=null, i.e. the DOM order.)
+      const base0 = cw.order() || cw.keys();
+      const cardAt0 = cw.cards().find((c) => cw.keyOf(c) === base0[0]);
+      cw.move(cardAt0, 1);
+      await sleep(60);
+      const moved = cw.order();
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })
+      );
+      await sleep(60);
+      const afterUndo = cw.order() || cw.keys();
+      t(
+        'ctrl+z undoes move',
+        !!moved &&
+          moved[0] === base0[1] &&
+          afterUndo.every((k, i) => k === base0[i]),
+        ''
+      );
+
+      // 11. Arrow-move swaps with the visual neighbor.
+      const preMove = cw.order() || cw.keys();
+      const cardAt1 = cw.cards().find((c) => cw.keyOf(c) === preMove[1]);
+      cw.move(cardAt1, -1);
+      await sleep(60);
+      const postMove = cw.order();
+      t(
+        'arrow move swaps neighbor',
+        !!postMove && postMove[0] === preMove[1] && postMove[1] === preMove[0],
+        ''
+      );
+      await sleep(360);
+
+      // 12. Clock freezes while the tab is hidden, resumes on return.
+      const clk = document.querySelector('[data-cw-clock]');
+      cw.setHidden(true);
+      await sleep(1100);
+      const frozenTxt = clk.textContent;
+      await sleep(1100);
+      t('clock pauses when hidden', clk.textContent === frozenTxt, frozenTxt);
+      cw.setHidden(false);
+      await sleep(1100);
+      t('clock resumes when visible', clk.textContent !== frozenTxt,
+        `${frozenTxt} -> ${clk.textContent}`);
+
+      // 12b. "reset clock" (debug menu) sets the puzzle back to 0:00 and
+      // keeps running; the saved record says so too. (The display updates
+      // every 500ms, so wait 1.6s to be sure it shows 0:01.)
+      await sleep(1100);
+      const beforeReset = clk.textContent;
+      const didReset = cw.resetClock();
+      const resetTxt = clk.textContent;
+      const liveRec = cw.times().filter((e) => !e.completed).sort((a, b) => (b.u || 0) - (a.u || 0))[0];
+      await sleep(1600);
+      t('reset clock: back to 0:00, saved, still running',
+        didReset && resetTxt === '0:00' && clk.textContent === '0:01' &&
+          !!liveRec && liveRec.ms === 0 && liveRec.clockReset > 0,
+        `${beforeReset} -> ${resetTxt} -> ${clk.textContent}, stored ${liveRec && liveRec.ms}`);
+
+      // 13. History sidebar lists puzzles with dates; the current one is
+      // marked "playing". Esc closes.
+      cw.putRecords([{
+        tiles: ['ALPHA', 'BETA', 'GAMMA', 'DELTA'],
+        words: ['ALPHA', 'BETA', 'GAMMA', 'DELTA'],
+        ms: 95000,
+        u: Date.now() - 86400000,
+        d: '2026-11-04',
+        guesses: [['ALPHA', 'BETA', 'GAMMA', 'DELTA']],
+      }]);
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const hp = document.querySelector('[data-cw-history-panel]');
+      const dateRows = hp ? hp.querySelectorAll('[data-cw-hist-row] .date') : [];
+      t('history sidebar opens with rows',
+        !!hp && dateRows.length > 0 && hp.textContent.includes('Nov 4'),
+        hp && hp.textContent.trim().slice(0, 60));
+      const curRow = hp && hp.querySelector('[data-cw-hist-row].current');
+      t('current puzzle shown as playing',
+        !!curRow && !!curRow.querySelector('.badge'),
+        curRow ? curRow.textContent.trim().slice(0, 40) : 'no .current row');
+      const datedRow = hp && hp.querySelector('[data-cw-hist-row].has-guesses');
+      // (Guess tiles are only built once a row is expanded.)
+      t('history row: view btn + guesses built on expand',
+        !!hp && !!hp.querySelector('[data-cw-hist-row] .view') &&
+          !!datedRow && !datedRow.querySelector('.guesses') &&
+          (datedRow.click(), datedRow.classList.contains('open')) &&
+          !!datedRow.querySelector('.guesses'),
+        '');
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+      await sleep(60);
+      t('history panel closes on Esc', !document.querySelector('[data-cw-history-panel]'));
+
+      // 14. Tag + arrangement persist for the NEXT visit (verified on run 2).
+      cw.tag(cw.cards()[7], 'blue');
+      await sleep(60);
+
+      // 15. Solving all groups stamps the puzzle's completion time — at the
+      // final Submit, not when the board finished emptying.
+      let lastSubmit = 0;
+      for (let n = 0; n < 3; n++) {
+        [...grid.querySelectorAll('input')]
+          .filter((i) => !i.checked)
+          .slice(0, 4)
+          .forEach((i) => {
+            i.checked = true;
+            i.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+        lastSubmit = Date.now();
+        document.getElementById('submit').click();
+        await sleep(100);
+      }
+      await sleep(1800); // empty-board freeze lands at ~1.5s
+      // (The newest completion: earlier runs in this browser leave records.)
+      const done = cw.times()
+        .filter((e) => e.completed)
+        .sort((x, y) => y.completed - x.completed)[0];
+      t('completion stamped on solve', !!done && !!done.started,
+        done ? 'stamped' : 'no completed entry');
+      t('completion time = final Submit',
+        !!done && Math.abs(done.completed - lastSubmit) < 300,
+        done ? `${done.completed - lastSubmit}ms after the click` : '');
+
+      // 16. Clear-history confirm popover: opens on clear, cancels safely,
+      // wipes on the red Clear button.
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const hp2 = document.querySelector('[data-cw-history-panel]');
+      const clearBtn = [...hp2.querySelectorAll('button')].find(
+        (b) => b.textContent === 'clear'
+      );
+      clearBtn.click();
+      await sleep(60);
+      const pop = document.querySelector('[data-cw-confirm]');
+      t('clear confirm popover appears', !!pop && !!pop.querySelector('.yes'));
+      pop.querySelector('.no').click();
+      await sleep(60);
+      t('cancel keeps history',
+        !document.querySelector('[data-cw-confirm]') && cw.times().length > 0);
+      clearBtn.click();
+      await sleep(60);
+      document.querySelector('[data-cw-confirm] .yes').click();
+      await sleep(60);
+      t('confirm clears history', cw.times().length === 0,
+        `${cw.times().length} entries left`);
+
+      // 17. Import: valid records merge in, junk is skipped, tile snapshots
+      // are stored compactly and render through the allow-list (no event
+      // handlers or scripts survive), and results/one-away/stats show.
+      window.__pwned = 0;
+      const evil =
+        '<div data-cw-tile style="width:150px;height:80px;display:flex">' +
+        '<img src="x" onerror="window.__pwned=1">' +
+        '<span style="display:block" onclick="window.__pwned=2">EVIL</span>' +
+        '<span style="background-image:image-set(&quot;https://evil.example/x.png&quot; 1x)">X</span>' +
+        '<script>window.__pwned=3<\/script></div>';
+      const g4 = (c, ws) => ws.map((w) => ({ t: w, correct: c }));
+      const res = cw.importRecords({ records: [
+        { d: '2026-01-02', tiles: ['EVIL', 'A2'], ms: 61000, u: Date.now() - 5000,
+          guesses: [
+            [{ t: 'EVIL', s: evil, w: 150, correct: 'yellow' },
+              { t: 'A2', correct: 'yellow' }, { t: 'A3', correct: 'yellow' },
+              { t: 'B1', correct: 'green' }],
+            g4('yellow', ['EVIL', 'A2', 'A3', 'A4']),
+            g4('green', ['B1', 'B2', 'B3', 'B4']),
+            g4('blue', ['C1', 'C2', 'C3', 'C4']),
+            g4('purple', ['D1', 'D2', 'D3', 'D4']),
+          ] },
+        { nope: true },
+      ] });
+      t('import adds valid records, skips junk', res.added === 1, JSON.stringify(res));
+      const imp = cw.times().find((e) => e.d === '2026-01-02');
+      const snap = imp && imp.guesses[0][0].s;
+      t('tile snapshot stored compactly',
+        !!snap && !/style=/.test(snap) && /data-cs=/.test(snap) && imp.css.length > 0,
+        snap ? `${snap.length} chars` : 'no snapshot');
+      // Reopen the panel so it renders the imported record.
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const hp3 = document.querySelector('[data-cw-history-panel]');
+      const impRow = [...hp3.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Jan 2\b/.test((r.querySelector('.date') || {}).textContent || ''));
+      impRow.click();
+      await sleep(100);
+      const evilChip = [...impRow.querySelectorAll('.chip.replica')].find((c) =>
+        c.textContent.includes('EVIL'));
+      t('snapshot rendered without handlers or scripts',
+        !!evilChip && !evilChip.querySelector('script,[onerror],[onclick]') &&
+          ![...evilChip.querySelectorAll('[style]')].some((el) =>
+            /image-set|evil\.example/.test(el.getAttribute('style'))) &&
+          window.__pwned === 0 &&
+          getComputedStyle(evilChip.querySelector('[data-cw-tile]')).display === 'flex',
+        evilChip ? evilChip.innerHTML.slice(0, 80) : 'no chip');
+      t('one-away guess marked', !!impRow.querySelector('.guess.one-away'));
+      const resultEl = impRow.querySelector('.result');
+      t('result shows win with mistakes',
+        !!resultEl && resultEl.textContent.includes('1 mistake'),
+        resultEl ? resultEl.textContent : 'no result');
+      const statsEl = hp3.querySelector('.stats');
+      t('stats block shows', !!statsEl && /played/i.test(statsEl.textContent),
+        statsEl ? statsEl.textContent : 'none');
+
+      // 17b. Every puzzle is listed (history is unlimited; no 60-row cap).
+      const many = [];
+      for (let n = 0; n < 75; n++)
+        many.push({ id: `bulk-${n}`, d: `2020-01-${String((n % 28) + 1).padStart(2, '0')}`,
+          tiles: [`BULK${n}`], ms: 1000, u: 1000 + n });
+      cw.putRecords(many);
+      document.querySelector('[data-cw-history-btn]').click(); // close
+      document.querySelector('[data-cw-history-btn]').click(); // reopen
+      await sleep(60);
+      const rowsShown = document.querySelectorAll('[data-cw-history-panel] [data-cw-hist-row]').length;
+      t('history lists every puzzle', rowsShown === cw.times().length && rowsShown > 75,
+        `${rowsShown} rows for ${cw.times().length} records`);
+      many.forEach((r) => cw.deleteRecord(r.id));
+      document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+
+      // 17c. Streak counts wins in the order puzzles were finished, not by
+      // puzzle date (archive puzzles are played out of order).
+      const won = () => [g4('yellow', ['Y1', 'Y2', 'Y3', 'Y4']), g4('green', ['G1', 'G2', 'G3', 'G4']),
+        g4('blue', ['B1', 'B2', 'B3', 'B4']), g4('purple', ['P1', 'P2', 'P3', 'P4'])];
+      const mixed = () => [{ t: 'Y1', correct: 'yellow' }, { t: 'G1', correct: 'green' },
+        { t: 'B1', correct: 'blue' }, { t: 'P1', correct: 'purple' }];
+      const lost = () => [mixed(), mixed().reverse(), [...mixed().slice(2), ...mixed().slice(0, 2)],
+        [mixed()[1], mixed()[0], mixed()[3], mixed()[2]]];
+      const soon = Date.now() + 60000; // newer than anything else stored
+      const streakRecs = [
+        { id: 'st-a', d: '2025-05-10', completed: soon + 1000, guesses: won() },
+        { id: 'st-b', d: '2024-01-01', completed: soon + 2000, guesses: lost() },
+        { id: 'st-c', d: '2026-02-02', completed: soon + 3000, guesses: won() },
+        { id: 'st-d', d: '2020-07-07', completed: soon + 4000, guesses: won() },
+      ].map((r) => ({ ...r, tiles: ['Y1'], ms: 60000, u: r.completed }));
+      cw.putRecords(streakRecs);
+      const st = cw.stats();
+      t('streak follows finish order', st.streak === 2, `streak ${st.streak}`);
+      streakRecs.forEach((r) => cw.deleteRecord(r.id));
+
+      // 17d. Guesses saved before 1.8 ({t, h} or plain words) are drawn in
+      // the box of a tile saved in full, keeping NYT's shrink-to-fit size.
+      const oldH = (w, fs) => `<span class="Card-module_reference" aria-hidden="true">${w}</span>` +
+        `<span style="font-size: ${fs};">${w}</span>`;
+      cw.importRecords({ records: [{ d: '2026-01-05', tiles: ['OLDA'], ms: 1000, u: Date.now() - 4000,
+        guesses: [[{ t: 'OLDA', h: oldH('OLDA', '1em'), correct: 'blue' },
+          { t: 'LONGOLDWORD', h: oldH('LONGOLDWORD', '0.8em') }, 'PLAIN', { t: 'OLDD' }]] },
+        // A puzzle saved in full (1.9+) provides the tile box.
+        { d: '2026-01-06', tiles: ['NEWA'], ms: 1000, u: Date.now() - 3000,
+          guesses: [[{ t: 'NEWA', w: 150, s: '<div data-cw-tile style="box-sizing:border-box;width:150px;' +
+            'height:80px;display:flex;align-items:center;justify-content:center;font-size:20px;' +
+            'font-weight:700"><span style="display:block;font-size:14px">NEWA</span></div>' }]] }] });
+      document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const oldRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Jan 5\b/.test((r.querySelector('.date') || {}).textContent || ''));
+      oldRow.click();
+      await sleep(100);
+      const oldChips = [...oldRow.querySelectorAll('.chip')];
+      const tileOf = (c) => c.querySelector('[data-cw-tile]');
+      const allReplica = oldChips.length === 4 && oldChips.every((c) => c.classList.contains('replica') && tileOf(c));
+      const fsOf = (c) => parseFloat(getComputedStyle(tileOf(c).firstElementChild).fontSize);
+      const rootFs = allReplica && parseFloat(getComputedStyle(tileOf(oldChips[1])).fontSize);
+      t('old guesses drawn as full tiles',
+        allReplica && oldChips.map((c) => c.textContent).join() === 'OLDA,LONGOLDWORD,PLAIN,OLDD' &&
+          Math.abs(fsOf(oldChips[1]) - rootFs * 0.8) < 0.5 && Math.abs(fsOf(oldChips[2]) - rootFs) < 0.5 &&
+          oldChips[0].dataset.color === 'blue',
+        allReplica ? `font ${fsOf(oldChips[1])}/${fsOf(oldChips[2])} vs root ${rootFs}`
+          : `${oldChips.length} chips, ${oldChips.map((c) => c.className)}`);
+      cw.times().filter((e) => ['2026-01-05', '2026-01-06'].includes(e.d))
+        .forEach((e) => cw.deleteRecord(e.id));
+
+      // 17d1. No tile saved in full and none on the board: old tiles still
+      // get a full tile (NYT's desktop tile built in), centered, with their
+      // saved size — never the plain chip.
+      // Set aside every record with a saved tile, and the board's tiles.
+      const snapRecs = cw.times().filter((e) => (e.guesses || []).some((g) => g.some((x) => x && x.s && x.w)))
+        .map((e) => JSON.parse(JSON.stringify(e)));
+      snapRecs.forEach((e) => cw.deleteRecord(e.id));
+      const tplGrid = cw.cards().length ? cw.cards()[0].parentElement : null;
+      const gridHome = tplGrid && [tplGrid.parentNode, tplGrid.nextSibling];
+      if (tplGrid) tplGrid.remove();
+      cw.importRecords({ records: [{ d: '2026-01-04', tiles: ['VIDEO GAME'], ms: 1000, u: Date.now() - 2000,
+        guesses: [[{ t: 'VIDEO GAME', h: oldH('VIDEO GAME', '1em'), correct: 'blue' },
+          { t: 'BOOK', h: oldH('BOOK', '1em'), correct: 'blue' }, { t: 'BIKE', h: oldH('BIKE', '1em'), correct: 'blue' },
+          { t: 'TOY', h: oldH('TOY', '1em'), correct: 'blue' }]] }] });
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const bareRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Jan 4\b/.test((r.querySelector('.date') || {}).textContent || ''));
+      if (bareRow) bareRow.click();
+      await sleep(100);
+      const bareTiles = bareRow ? [...bareRow.querySelectorAll('.chip.replica [data-cw-tile]')] : [];
+      const noTpl = cw.cards().length === 0;
+      if (tplGrid) gridHome[0].insertBefore(tplGrid, gridHome[1]);
+      cw.putRecords(snapRecs);
+      t('old tiles without any template: built-in NYT tile, centered',
+        noTpl && bareTiles.length === 4 && parseFloat(bareTiles[0].style.width) === 150 &&
+          getComputedStyle(bareTiles[0].firstElementChild).textAlign === 'center' &&
+          bareTiles[0].firstElementChild.style.fontSize === '1em',
+        `${noTpl ? 'no template' : 'template still found'}, ${bareTiles.length} tiles, ${bareTiles[0] && bareTiles[0].style.width}, ` +
+          `${snapRecs.length} records set aside`);
+      cw.times().filter((e) => e.d === '2026-01-04').forEach((e) => cw.deleteRecord(e.id));
+
+      // 17d2. Word-only tiles (NYT imports) use the widest saved tile as
+      // their box and NYT's shrink-to-fit: a word wider than 90% of the
+      // tile is scaled down to 90% of it; text is centered.
+      const tplDiv = (w, h, fs) => `<div data-cw-tile style="box-sizing:border-box;width:${w}px;height:${h}px;` +
+        `display:flex;flex-wrap:wrap;place-content:center;font-size:${fs}px;font-weight:700;text-transform:uppercase;` +
+        `font-family:Arial"><span style="display:block">X</span></div>`;
+      cw.putRecords([
+        { id: 'fit-wide', d: '2026-01-07', tiles: ['X'], ms: 1000, u: 10, guesses: [[{ t: 'X', w: 150, s: tplDiv(150, 80, 20) }]] },
+        { id: 'fit-narrow', d: '2026-01-08', tiles: ['X'], ms: 1000, u: 20, guesses: [[{ t: 'X', w: 85, s: tplDiv(85, 70, 16) }]] },
+        { id: 'fit-nyt', d: '2026-01-09', nyt: true, tiles: ['W'], ms: 0, u: 30, completed: 30,
+          guesses: [[{ t: 'DIVERSIFICATIONS', correct: 'blue' }, { t: 'SUN', correct: 'blue' },
+            { t: 'CARNABY STREET', correct: 'blue' }, { t: 'MOD', correct: 'blue' }]] },
+      ]);
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const fitRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Jan 9\b/.test((r.querySelector('.date') || {}).textContent || ''));
+      if (fitRow) fitRow.click();
+      await sleep(150);
+      const fitTiles = fitRow ? [...fitRow.querySelectorAll('.chip.replica [data-cw-tile]')] : [];
+      const lineW = (el) => { const rg = document.createRange(); rg.selectNodeContents(el);
+        return Math.max(...[...rg.getClientRects()].map((r) => r.width)); };
+      const z = fitTiles[0] ? parseFloat(fitTiles[0].style.zoom) || 1 : 1;
+      const longW = fitTiles[0] ? lineW(fitTiles[0].firstElementChild) / z : 0;
+      t('word-only tiles: widest box, NYT shrink-to-fit, centered',
+        fitTiles.length === 4 && parseFloat(fitTiles[0].style.width) === 150 &&
+          Math.abs(longW - 135) < 3 && fitTiles[1].firstElementChild.style.fontSize === '1em' &&
+          fitTiles.every((x) => getComputedStyle(x.firstElementChild).textAlign === 'center'),
+        `${fitTiles.length} tiles, box ${fitTiles[0] && fitTiles[0].style.width}, long word ${longW.toFixed(1)}px ` +
+          `(${fitTiles[0] && fitTiles[0].firstElementChild.style.fontSize}), SUN ${fitTiles[1] && fitTiles[1].firstElementChild.style.fontSize}`);
+      ['fit-wide', 'fit-narrow', 'fit-nyt'].forEach((id) => cw.deleteRecord(id));
+
+      // 17e. Solving-order counters: purple first, reverse rainbow, and
+      // "rarest first" from Connections Bot's firstColor (fillRare: past
+      // finished puzzles only, never today's).
+      const grp = (c) => [1, 2, 3, 4].map((k) => ({ t: `${c}${k}`, correct: c }));
+      const mixedG = [{ t: 'm1', correct: 'yellow' }, { t: 'm2', correct: 'green' },
+        { t: 'm3', correct: 'yellow' }, { t: 'm4', correct: 'yellow' }];
+      const nowT = new Date();
+      const todayT = `${nowT.getFullYear()}-${String(nowT.getMonth() + 1).padStart(2, '0')}-${String(nowT.getDate()).padStart(2, '0')}`;
+      const ordStatsBefore = cw.stats();
+      cw.putRecords([
+        { id: 'ord-a', d: '2025-01-01', tiles: ['A'], ms: 1000, u: 1, completed: 1,
+          guesses: ['purple', 'blue', 'green', 'yellow'].map(grp) },
+        { id: 'ord-b', d: '2025-01-02', tiles: ['B'], ms: 1000, u: 2, completed: 2,
+          guesses: [mixedG, ...['purple', 'blue', 'green', 'yellow'].map(grp)] },
+        { id: 'ord-c', d: '2025-01-03', tiles: ['C'], ms: 1000, u: 3, completed: 3,
+          guesses: ['blue', 'yellow', 'green', 'purple'].map(grp) },
+        { id: 'ord-d', d: todayT, tiles: ['D'], ms: 1000, u: 4, completed: 4,
+          guesses: ['blue', 'yellow', 'green', 'purple'].map(grp) },
+      ]);
+      // Rarest first group: purple on 01-01, blue on 01-02 and 01-03 (and today).
+      const botFirst = { '2025-01-01': [9, 8, 7, 1], '2025-01-02': [9, 8, 1, 7], '2025-01-03': [9, 8, 1, 7] };
+      const botAsked = [];
+      const botFetch = async (url) => {
+        botAsked.push(url);
+        const d = (url.match(/(\d{4}-\d{2}-\d{2})-summary\.json$/) || [])[1];
+        const fc = botFirst[d] || [5, 5, 1, 5];
+        return new Response(JSON.stringify({ firstColor: { 0: fc[0], 1: fc[1], 2: fc[2], 3: fc[3] } }), { status: 200 });
+      };
+      const midStats = cw.stats();
+      const filled = await cw.fillRare(botFetch);
+      const ordStats = cw.stats();
+      const dd = (k, st) => st[k] - ordStatsBefore[k];
+      t('order counters: purple first, reverse rainbow, rarest first',
+        dd('purpleFirst', ordStats) === 1 && dd('reverseRainbow', ordStats) === 2 &&
+          dd('rarestFirst', midStats) === 0 && dd('rarestFirst', ordStats) === 2 && filled >= 3 &&
+          !cw.times().find((e) => e.id === 'ord-d').rare &&
+          !botAsked.some((u) => u.includes(`${todayT}-summary`)) &&
+          cw.times().find((e) => e.id === 'ord-a').rare === 'purple',
+        `+${dd('purpleFirst', ordStats)} purple, +${dd('reverseRainbow', ordStats)} rainbow, ` +
+          `+${dd('rarestFirst', ordStats)} rarest, filled ${filled}, asked ${botAsked.length}`);
+      // Each correct group shows the share of winners who solved it first.
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const ordRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Jan 1, 2025/.test((r.querySelector('.date') || {}).textContent || ''));
+      if (ordRow) ordRow.click();
+      await sleep(100);
+      const pcts = ordRow ? [...ordRow.querySelectorAll('.guess .note.pct')].map((n) => n.textContent) : [];
+      const fa = cw.times().find((e) => e.id === 'ord-a').first;
+      t('correct groups show the share of winners who solved them first',
+        !!fa && fa.purple === 4 && fa.yellow === 36 &&
+          pcts.join() === 'first for 4%,first for 28%,first for 32%,first for 36%',
+        `${JSON.stringify(fa)}; ${pcts.join(' | ')}`);
+      ['ord-a', 'ord-b', 'ord-c', 'ord-d'].forEach((id) => cw.deleteRecord(id));
+
+      // 17f. Category names, wrong-guess shares and the play date. Finished
+      // puzzles get category names (today's too); past ones also get the
+      // share of games with each wrong guess, matched by card positions.
+      const C4 = ['Y', 'G', 'B', 'P'];
+      const factAnswers = { categories: C4.map((c, i) => ({ title: `${c} TITLE`,
+        cards: [1, 2, 3, 4].map((k) => ({ content: `${c}${k}`, position: i * 4 + k - 1 })) })) };
+      const item = (w) => ({ t: w, correct: ['yellow', 'green', 'blue', 'purple'][C4.indexOf(w[0])] });
+      const g4w = (ws) => ws.map(item);
+      const solved = C4.map((c) => g4w([1, 2, 3, 4].map((k) => `${c}${k}`)));
+      const startTs = new Date(2025, 1, 3, 10, 0).getTime();
+      cw.putRecords([
+        { id: 'fact-a', d: '2025-02-01', tiles: ['Y1'], ms: 1000, u: startTs + 300000, started: startTs,
+          completed: startTs + 300000, guesses: [g4w(['Y1', 'Y2', 'Y3', 'G1']), g4w(['P1', 'B1', 'G2', 'Y4']), ...solved] },
+        { id: 'fact-t', d: todayT, tiles: ['Y1'], ms: 1000, u: startTs, completed: startTs, guesses: solved },
+      ]);
+      const factFetch = async (url) => {
+        const ok = (o) => new Response(JSON.stringify(o), { status: 200 });
+        if (/\/svc\/connections\/v2\/\d{4}-\d{2}-\d{2}\.json$/.test(url)) return ok(factAnswers);
+        if (/-summary\.json$/.test(url))
+          return ok({ complete: 1000, firstColor: { 0: 40, 1: 30, 2: 20, 3: 10 }, mistakenGuesses: { '0,1,2,4': 90 } });
+        return new Response('{}', { status: 404 });
+      };
+      await cw.fillRare(factFetch);
+      const fa2 = cw.times().find((e) => e.id === 'fact-a');
+      const ft = cw.times().find((e) => e.id === 'fact-t');
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const factRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Feb 1, 2025/.test((r.querySelector('.date') || {}).textContent || ''));
+      if (factRow) factRow.click();
+      await sleep(100);
+      const notes = factRow ? [...factRow.querySelectorAll('.guess')].map((g) => (g.querySelector('.note') || {}).textContent || '') : [];
+      const cats = factRow ? [...factRow.querySelectorAll('.guess')].map((g) =>
+        g.firstElementChild && g.firstElementChild.classList.contains('cat') ? g.firstElementChild.textContent : '') : [];
+      const dayTxt = new Date(startTs).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      const timesTxt = factRow ? (factRow.querySelector('.times') || {}).textContent || '' : '';
+      t('categories, wrong-guess share and play date',
+        !!fa2 && fa2.cats && fa2.cats.purple === 'P TITLE' && fa2.wrong['G1|Y1|Y2|Y3'] === 9 && fa2.wrong['B1|G2|P1|Y4'] === 0 &&
+          !!ft && ft.cats && ft.cats.yellow === 'Y TITLE' && !ft.first && !ft.wrong &&
+          notes[0] === 'One away · made by 9%' && notes[1] === 'made by <1%' && notes[2] === 'first for 40%' &&
+          cats.join() === ',,Y TITLE,G TITLE,B TITLE,P TITLE' &&
+          timesTxt.startsWith(`${dayTxt}, `),
+        `${cats.join(',')} || ${notes.join(' | ')} || ${timesTxt}`);
+      ['fact-a', 'fact-t'].forEach((id) => cw.deleteRecord(id));
+
+      // 17g. Search matches inside one tile (or category name, or the date),
+      // never across neighbors: "big a" finds BIG APPLE, not BIG + AIRPLANE.
+      cw.putRecords([
+        { id: 'srch-a', d: '2025-03-01', tiles: ['BIG APPLE', 'SIN CITY'], ms: 1000, u: 1,
+          guesses: [[{ t: 'BIG APPLE' }, { t: 'SIN CITY' }, { t: 'MOTOR CITY' }, { t: 'BIG EASY' }]] },
+        { id: 'srch-b', d: '2025-03-02', tiles: ['BIG', 'AIRPLANE'], ms: 1000, u: 2,
+          cats: { yellow: '80S COMEDIES', green: 'G', blue: 'B', purple: 'P' },
+          guesses: [[{ t: 'BIG' }, { t: 'AIRPLANE' }, { t: 'CLUE' }, { t: 'TWINS' }]] },
+      ]);
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const sBox = document.querySelector('[data-cw-history-panel] input[type="search"]');
+      const shown = (q) => {
+        sBox.value = q;
+        sBox.dispatchEvent(new Event('input', { bubbles: true }));
+        return [...document.querySelectorAll('[data-cw-hist-row]')]
+          .filter((r) => r.style.display !== 'none')
+          .map((r) => (r.querySelector('.date') || {}).textContent || '')
+          .filter((d) => /Mar [12], 2025/.test(d))
+          .map((d) => d.match(/Mar (\d)/)[1])
+          .join();
+      };
+      const sBigA = shown('big a');
+      const sCity = shown('city');
+      const sCat = shown('80s com');
+      const sDate = shown('mar 2');
+      shown('');
+      t('search matches within one tile, category or date',
+        sBigA === '1' && sCity === '1' && sCat === '2' && sDate === '2',
+        `big a: ${sBigA}; city: ${sCity}; 80s com: ${sCat}; mar 2: ${sDate}`);
+      ['srch-a', 'srch-b'].forEach((id) => cw.deleteRecord(id));
+
+      // 18. Deleting one entry (after confirming) removes just that record.
+      const nBefore = cw.times().length;
+      const impRow2 = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Jan 2\b/.test((r.querySelector('.date') || {}).textContent || ''));
+      impRow2.querySelector('.del').click();
+      await sleep(60);
+      document.querySelector('[data-cw-confirm] .yes').click();
+      await sleep(60);
+      t('delete removes one record',
+        cw.times().length === nBefore - 1 && !cw.times().some((e) => e.d === '2026-01-02'),
+        `${nBefore} -> ${cw.times().length}`);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(60);
+
+      // 19. Pre-1.9 history (localStorage['cw-times']) is copied in on every
+      // load, not just the first: a private window sees none of it and must
+      // not end the migration. A puzzle already in the store keeps its record,
+      // and a copied record that was deleted later never comes back.
+      const legacyBefore = localStorage.getItem('cw-times');
+      const legacy = (n) => ({ id: `leg-${n}`, d: `2019-03-0${n}`, tiles: [`LEG${n}`], ms: 5000, u: n });
+      const has = (d) => cw.times().some((e) => e.d === d);
+      localStorage.removeItem('cw-times');
+      const m0 = await cw.migrate();
+      localStorage.setItem('cw-times', JSON.stringify([legacy(1), legacy(2)]));
+      cw.putRecords([{ id: 'new-2', d: '2019-03-02', tiles: ['NEW2'], ms: 1, u: 3 }]);
+      const m1 = await cw.migrate();
+      const kept = cw.times().find((e) => e.d === '2019-03-02');
+      t('legacy history copied in after an empty load',
+        m0 === 0 && m1 === 1 && has('2019-03-01') && kept && kept.tiles[0] === 'NEW2',
+        `m0=${m0} m1=${m1} kept=${kept && kept.tiles[0]}`);
+      cw.deleteRecord('leg-1');
+      localStorage.setItem('cw-times', JSON.stringify([legacy(1), legacy(2), legacy(3)]));
+      const m2 = await cw.migrate();
+      t('deleted legacy record stays deleted', m2 === 1 && !has('2019-03-01') && has('2019-03-03'),
+        `m2=${m2}`);
+      ['leg-3', 'new-2'].forEach((id) => cw.deleteRecord(id));
+      if (legacyBefore == null) localStorage.removeItem('cw-times');
+      else localStorage.setItem('cw-times', legacyBefore);
+
+      // 20. Import from NYT: finished puzzles saved to the NYT account are
+      // rebuilt from the saved tile positions and the published answers;
+      // puzzles already in history, unfinished ones and ones that can't be
+      // rebuilt are left alone; "remove NYT imports" takes them back out.
+      const nowD = new Date();
+      const todayD = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, '0')}-${String(nowD.getDate()).padStart(2, '0')}`;
+      const W = ['Y', 'G', 'B', 'P'];
+      // 2018-04-01 is a picture puzzle: image_url + image_alt_text, no content.
+      const answersJson = (d) => ({ id: 1, print_date: d, categories: W.map((c, i) => ({
+        title: `CAT ${c}`, cards: [0, 1, 2, 3].map((k) => d === '2018-04-01'
+          ? { image_url: `https://example.test/${c}${k + 1}.svg`, image_alt_text: `${c}${k + 1}`, position: i * 4 + k }
+          : { content: `${c}${k + 1}`, position: i * 4 + k }) })) });
+      // Positions: Y = 0-3, G = 4-7, B = 8-11, P = 12-15.
+      const allWon = ['0,1,2,3', '4,5,6,7', '8,9,10,11', '12,13,14,15'];
+      const states = {
+        120: { printDate: todayD, data: { puzzleComplete: false, guesses: [{ cards: '0,1,2,4' }] } },
+        100: { printDate: '2018-05-01', timestamp: 1525200000,
+          data: { puzzleComplete: true, puzzleWon: true, guesses: [{ cards: '0,1,2,4', correct: false },
+            ...allWon.map((c) => ({ cards: c, correct: true }))] } },
+        99: { printDate: '2018-04-30', timestamp: 1525100000, data: { puzzleComplete: true, guesses: allWon.map((c) => ({ cards: c })) } },
+        80: { printDate: '2018-04-01', timestamp: 1522600000,
+          data: { puzzleComplete: true, guesses: [[12, 13, 14, 15], [8, 9, 10, 11], [4, 5, 6, 7], [0, 1, 2, 3]].map((c) => ({ cards: c })) } },
+        50: { printDate: '2018-02-01', data: { puzzleComplete: false, guesses: [{ cards: '0,1,2,3' }] } },
+        30: { printDate: '2018-01-01', timestamp: 1514800000, data: { puzzleComplete: true, guesses: [{ cards: '0,1,2,99' }] } },
+      };
+      const asked = [];
+      // opt.max: NYT answers 400 to more ids than this; opt.bad: ids it
+      // always rejects with a 400 (every id when 'all'); opt.states replaces
+      // the saved states; opt.ids gives puzzle ids for dates.
+      const mockFetch = (signedIn, opt = {}) => async (url) => {
+        asked.push(url);
+        const json = (o, status = 200) => new Response(JSON.stringify(o), { status });
+        let m = url.match(/\/svc\/connections\/v2\/(\d{4}-\d{2}-\d{2})\.json$/);
+        if (m) return m[1] === todayD ? json({ id: 120 }) : json({ ...answersJson(m[1]), id: (opt.ids || {})[m[1]] || 1 });
+        m = url.match(/latests\?puzzle_ids=([\d,]+)$/);
+        if (m) {
+          if (!signedIn) return json({ error: 'forbidden' }, 403);
+          const ids = m[1].split(',');
+          if (opt.bad === 'all' || ids.length > (opt.max || 1e9) || ids.some((id) => (opt.bad || []).includes(id)))
+            return json({ error: 'invalid puzzle_ids' }, 400);
+          const st = opt.states || states;
+          return json({ states: ids.filter((id) => st[id]).map((id) => ({ puzzleId: id, ...st[id] })) });
+        }
+        return json({}, 404);
+      };
+      cw.putRecords([{ id: 'had-0430', d: '2018-04-30', tiles: ['MINE'], ms: 90000, u: 5 }]);
+      const statsBefore = cw.stats();
+      const out = await cw.importFromNyt(mockFetch(true), '');
+      const r0501 = cw.times().find((e) => e.d === '2018-05-01');
+      const r0401 = cw.times().find((e) => e.d === '2018-04-01');
+      t('NYT import adds finished puzzles only',
+        out && !out.error && out.added === 2 && out.had === 2 && out.unfinished === 1 && out.skipped === 1 &&
+          !cw.times().some((e) => e.d === '2018-02-01' || e.d === '2018-01-01') &&
+          cw.times().find((e) => e.d === '2018-04-30').tiles[0] === 'MINE',
+        JSON.stringify(out));
+      t('NYT import rebuilds guesses, colors and finish time',
+        !!r0501 && r0501.nyt && r0501.ms === 0 && r0501.tiles.length === 16 && r0501.guesses.length === 5 &&
+          r0501.guesses[0].map((x) => x.correct).join() === 'yellow,yellow,yellow,green' &&
+          r0501.completed === 1525200000000 && !!r0401 && r0401.guesses[0][0].t === 'P1',
+        r0501 ? JSON.stringify(r0501.guesses[0]) : 'no record');
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const nytRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /May 1\b/.test((r.querySelector('.date') || {}).textContent || ''));
+      const st2 = cw.stats();
+      t('imported row: result, no time, labeled',
+        !!nytRow && /1 mistake/.test(nytRow.textContent) && nytRow.querySelector('.meta').textContent.trim() === '–' &&
+          /from NYT/.test(nytRow.textContent) && st2.played === statsBefore.played + 2 && st2.avgMs === statsBefore.avgMs,
+        nytRow ? nytRow.textContent.slice(0, 80) : 'no row');
+      // Picture puzzle: each tile is drawn as its image inside a full tile.
+      cw.putRecords([{ id: 'tpl-0106', d: '2026-01-06', tiles: ['NEWA'], ms: 1000, u: 1,
+        guesses: [[{ t: 'NEWA', w: 150, s: '<div data-cw-tile style="box-sizing:border-box;width:150px;' +
+          'height:80px;display:flex;align-items:center;justify-content:center;font-size:20px;' +
+          'font-weight:700"><span style="display:block;font-size:14px">NEWA</span></div>' }]] }]);
+      if (document.querySelector('[data-cw-history-panel]'))
+        document.querySelector('[data-cw-history-btn]').click();
+      document.querySelector('[data-cw-history-btn]').click();
+      await sleep(60);
+      const picRow = [...document.querySelectorAll('[data-cw-hist-row]')].find((r) =>
+        /Apr 1, 2018/.test((r.querySelector('.date') || {}).textContent || ''));
+      if (picRow) picRow.click();
+      await sleep(100);
+      const pics = picRow ? [...picRow.querySelectorAll('.chip.replica [data-cw-tile] img.cw-pic')] : [];
+      t('imported picture puzzle: images drawn in full tiles',
+        /^<img src="https:\/\/example\.test\/P1\.svg"/.test(r0401.guesses[0][0].h || '') &&
+          pics.length === 16 && pics[0].getAttribute('src') === 'https://example.test/P1.svg' && pics[0].alt === 'P1' &&
+          parseFloat(pics[0].style.height) === 80 &&
+          getComputedStyle(pics[0]).maxHeight === 'none',
+        `${pics.length} pictures; ${r0401.guesses[0][0].h}`);
+      cw.deleteRecord('tpl-0106');
+      const again = await cw.importFromNyt(mockFetch(true), '');
+      const removed = cw.removeNytImports();
+      t('re-import adds nothing; remove takes imports back out',
+        again.added === 0 && removed === 2 && !cw.times().some((e) => e.nyt) &&
+          cw.times().some((e) => e.d === '2018-04-30'),
+        `again ${again.added}, removed ${removed}`);
+      asked.length = 0;
+      const picky = await cw.importFromNyt(mockFetch(true, { max: 10, bad: ['77'] }), '');
+      const okIds = asked.filter((u) => /latests/.test(u)).map((u) => u.split('=')[1].split(','));
+      const seen = okIds.filter((l) => l.length <= 10 && !l.includes('77')).flat();
+      t('NYT import retries smaller batches and skips rejected ids',
+        !picky.error && picky.added === 2 && picky.failed === 1 && seen.length === 119 && new Set(seen).size === 119,
+        `${JSON.stringify(picky)}, ${seen.length} ids fetched`);
+      cw.removeNytImports();
+      const refused = await cw.importFromNyt(mockFetch(true, { bad: 'all' }), '');
+      t('NYT import shows why NYT refused',
+        refused.added === 0 && /HTTP 400 \(invalid puzzle_ids\)/.test(refused.error), refused.error);
+      // Start date: only ids from that date's puzzle up are asked for.
+      asked.length = 0;
+      const fin = (d) => ({ printDate: d, timestamp: 1700000000, data: { puzzleComplete: true, guesses: allWon.map((c) => ({ cards: c })) } });
+      const sinceOut = await cw.importFromNyt(mockFetch(true, {
+        ids: { '2024-02-01': 90 }, states: { 100: fin('2024-05-01'), 95: fin('2024-01-20'), 80: fin('2024-01-15') } }), '2024-02-01');
+      const lat = asked.filter((u) => /latests/.test(u)).flatMap((u) => u.split('=')[1].split(',').map(Number));
+      t('NYT import stops at the "from" date',
+        !sinceOut.error && sinceOut.added === 1 && Math.min(...lat) === 90 && lat.length === 31 &&
+          cw.times().some((e) => e.d === '2024-05-01') && !cw.times().some((e) => /^2024-01/.test(e.d || '')),
+        `${JSON.stringify(sinceOut)}, ids ${Math.min(...lat)}-${Math.max(...lat)}`);
+      const sinceBad = await cw.importFromNyt(mockFetch(true, { ids: { '2030-01-01': 999 } }), '2030-01-01');
+      cw.removeNytImports();
+      const oldest = cw.times().filter((e) => !e.nyt && /^\d{4}-\d{2}-\d{2}$/.test(e.d || '')).map((e) => e.d).sort()[0];
+      t('"from" date defaults to the oldest month played; bad date explains itself',
+        !!oldest && cw.nytSince() === oldest.slice(0, 8) + '01' && sinceBad.added === 0 && /no puzzle found/.test(sinceBad.error),
+        `${cw.nytSince()} (oldest ${oldest}); ${sinceBad.error}`);
+      // Date range: only ids from the "from" date's puzzle up to the "to"
+      // date's are asked for, and puzzles dated outside it are left out.
+      asked.length = 0;
+      const rangeOut = await cw.importFromNyt(mockFetch(true, {
+        ids: { '2024-02-01': 90, '2024-04-01': 98 },
+        states: { 100: fin('2024-05-01'), 97: fin('2024-03-20'), 95: fin('2024-03-01'), 80: fin('2024-01-15') } }),
+        '2024-02-01', '2024-04-01');
+      const latR = asked.filter((u) => /latests/.test(u)).flatMap((u) => u.split('=')[1].split(',').map(Number));
+      const rangeDs = cw.times().filter((e) => e.nyt).map((e) => e.d).sort().join();
+      cw.removeNytImports();
+      const backwards = await cw.importFromNyt(mockFetch(true, { ids: { '2024-02-01': 90, '2024-04-01': 98 } }),
+        '2024-04-01', '2024-02-01');
+      t('NYT import stops at the "to" date',
+        !rangeOut.error && rangeOut.added === 2 && rangeDs === '2024-03-01,2024-03-20' &&
+          Math.min(...latR) === 90 && Math.max(...latR) === 98 && latR.length === 9 &&
+          backwards.added === 0 && /after the "to" date/.test(backwards.error),
+        `${JSON.stringify(rangeOut)}, ids ${Math.min(...latR)}-${Math.max(...latR)}, ${rangeDs}; ${backwards.error}`);
+      const signedOut = await cw.importFromNyt(mockFetch(false), '');
+      t('NYT import while signed out explains itself',
+        signedOut.added === 0 && /sign in/i.test(signedOut.error), signedOut.error);
+      cw.deleteRecord('had-0430');
+
+      // Re-seed a record for this puzzle so the next run still tests restore.
+      // Records match by date, and the mock board is "today's" puzzle.
+      const words0 = cw.texts();
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      cw.clearRecords();
+      cw.putRecords([{ tiles: words0, words: words0, ms: 0, u: Date.now(), d: today }]);
+    } catch (err) {
+      results.push(`<span class="fail">ERROR</span> ${esc(String(err && err.stack || err))}`);
+    } finally {
+      selfTest.running = false;
+      selfTest.lastResults = results.join('\n');
+      panel.innerHTML =
+        `<h1>self-test</h1>` + selfTest.lastResults +
+        `\n\n<h1>__cw state</h1>` + esc(snapshot());
+    }
+  }
+
+  const btn = document.createElement('button');
+  btn.textContent = 'Run self-test';
+  btn.addEventListener('click', runSelfTest);
+  document.getElementById('controls').appendChild(btn);
+
+  const vParam = (location.search.match(/[?&]v=([\w-]+)/) || [])[1];
+  if (vParam) document.getElementById('variant').value = vParam;
+  buildBoard(document.getElementById('variant').value);
+  if (/[?&]selftest\b/.test(location.search)) runSelfTest();
+})();
+</script>
+</body>
+</html>
