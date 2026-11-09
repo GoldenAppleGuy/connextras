@@ -1,6 +1,6 @@
 # Connextras
 
-A Firefox add-on that adds the tools NYT Connections leaves out: rearrange
+A browser add-on (Firefox, Chrome, Edge) that adds the tools NYT Connections leaves out: rearrange
 and color-tag tiles while you think, undo, a puzzle clock, and a history of
 every puzzle you've played with your guesses, results and stats.
 
@@ -49,16 +49,21 @@ NYT, from the Connections page:
 
 ## Install
 
-From [addons.mozilla.org](https://addons.mozilla.org/) (search for
-"Connextras"), or build it yourself:
+Firefox: from [addons.mozilla.org](https://addons.mozilla.org/) (search
+for "Connextras"). Chrome and Edge: from the Chrome Web Store or Edge
+Add-ons once published, or load it yourself (below).
+
+To build it yourself:
 
 ```
 python build.py
 ```
 
-That writes `connextras-<version>.xpi`. For development, load
-`extension/manifest.json` from `about:debugging` → This Firefox → Load
-Temporary Add-on.
+That writes `connextras-<version>.xpi` (Firefox) and
+`connextras-<version>-chrome.zip` (Chrome/Edge). For development, load the
+`extension/` folder directly: Firefox `about:debugging` → This Firefox →
+Load Temporary Add-on → `extension/manifest.json`; Chrome/Edge
+`chrome://extensions` → Developer mode → Load unpacked → `extension/`.
 
 ## Development
 

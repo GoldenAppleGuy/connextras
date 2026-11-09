@@ -1,3 +1,4 @@
 *.xpi
 __pycache__/
 dev/out/
+*-chrome.zip

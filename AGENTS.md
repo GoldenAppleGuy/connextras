@@ -1,6 +1,6 @@
 # Connextras
 
-Firefox extension (MV3) that adds drag-to-reorder, right-drag color tags,
+Browser extension (MV3; Firefox, and Chrome/Edge from one source) that adds drag-to-reorder, right-drag color tags,
 arrow-key reordering, Ctrl+Z undo, a persistent puzzle clock, a puzzle-time
 history panel, and a dark-mode toggle to NYT Connections.
 
@@ -11,9 +11,12 @@ history panel, and a dark-mode toggle to NYT Connections.
 - `dev/harness.html` — offline mock of the Connections board for testing
 - `dev/icon.svg` — icon source (render the PNGs with headless Edge/Chrome
   `--screenshot`, transparent background)
-- `dev/amo-listing.md`, `dev/listing/` — addons.mozilla.org listing text
+- `dev/amo-listing.md`, `dev/chrome-listing.md`, `dev/listing/` — store
+  listing text (addons.mozilla.org; Chrome Web Store / Edge Add-ons)
   and screenshots (1280×800, taken on the live site via `dev/wf.mjs`)
 - `build.py` — packages `extension/` into `connextras-<version>.xpi`
+  (Firefox) and `connextras-<version>-chrome.zip` (Chrome/Edge)
+- `dev/wf.mjs` / `dev/cr.mjs` — live test drivers for Waterfox / Chromium
 - `*.xpi` — built add-on packages
 - `README.md`, `LICENSE` (MIT)
 
@@ -244,7 +247,7 @@ The toggle flips NYT's own dark palette (`body[data-mode="dark"]
 page still computes light colors after toggling (dark CSS not present),
 `html[data-cw-dark-fallback]` styles in `content.css` take over.
 
-## Live testing in Waterfox (`dev/wf.mjs`)
+## Live testing in Waterfox (`dev/wf.mjs`; Chromium: see Chrome / Edge)
 
 `node dev/wf.mjs [--headless]` launches Waterfox (`$WATERFOX`, default
 `C:\Program Files\Waterfox\waterfox.exe`) with a throwaway profile (no
@@ -310,7 +313,28 @@ an NYT Games subscription via the Connections archive.
 
 ## Build & install
 
-- `python build.py` → `connextras-<version>.xpi` (drops
-  `@dev-only` blocks; fails on unbalanced markers)
-- Dev install: `about:debugging` → This Firefox → Load Temporary Add-on →
-  pick `extension/manifest.json`
+- `python build.py` → `connextras-<version>.xpi` and
+  `connextras-<version>-chrome.zip` (drops `@dev-only` blocks; fails on
+  unbalanced markers). The Chrome zip's manifest leaves out
+  `browser_specific_settings` (Firefox's id and data declaration).
+- Dev install, Firefox: `about:debugging` → This Firefox → Load Temporary
+  Add-on → pick `extension/manifest.json`. Chrome/Edge: `chrome://extensions`
+  (`edge://extensions`) → Developer mode → Load unpacked → `extension/`.
+
+## Chrome / Edge
+
+The same `extension/` runs in Chromium. Browser differences live in two
+places in `content.js`: storage (`extStorage`: `browser.storage`, else
+`chrome.storage`, else the harness's localStorage) and `pageFetch`
+(Firefox's `content.fetch` sends the page's NYT cookies; Chromium's plain
+`fetch` already does). Never key anything on `browser` alone, or Chrome
+silently falls back to the page's localStorage.
+
+`node dev/cr.mjs [--headless] [--port N]` is `dev/wf.mjs` for Chromium
+over the DevTools protocol: same endpoints and token, plus
+`/drag?x1=&y1=&x2=&y2=[&button=right]`; `/reload` only reloads the page
+(extension files load at launch). Browser: `$CHROME`, else Edge. Branded
+Google Chrome 137+ ignores `--load-extension`, so use Edge or Chrome for
+Testing. `node dev/smoke.mjs --chrome` runs the smoke test there. NYT
+shows Chromium extra promos; the smoke test closes them via their
+`close-` buttons like any prompt.

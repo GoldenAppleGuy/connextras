@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Connextras",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Rearrange, color-tag and undo on NYT Connections, plus a puzzle clock, solve history with stats, and dark mode. Unofficial.",
   "icons": {
     "48": "icon-48.png",

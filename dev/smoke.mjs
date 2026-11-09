@@ -9,7 +9,9 @@
 // leaving mid-game, exact finish time, results screen, history panel,
 // debug-menu check, export/import, and the phone layout.
 //
-//   node dev/smoke.mjs [--headed] [--port 9340]
+//   node dev/smoke.mjs [--headed] [--port 9340] [--chrome]
+//
+// --chrome runs it in Chromium instead (dev/cr.mjs: Edge, or $CHROME).
 //
 // Exit code 0 = everything passed. Takes about two minutes. Uses today's
 // puzzle, logged out, in a fresh profile — never your own account.
@@ -24,6 +26,7 @@ const OUT = path.join(ROOT, 'dev', 'out');
 const args = process.argv.slice(2);
 const PORT = +(args.includes('--port') ? args[args.indexOf('--port') + 1] : 9340);
 const HEADED = args.includes('--headed');
+const CHROME = args.includes('--chrome');
 
 const results = [];
 const check = (name, ok, detail = '') => {
@@ -33,7 +36,7 @@ const check = (name, ok, detail = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // --- Start the harness -----------------------------------------------------
-const wfArgs = [path.join(ROOT, 'dev', 'wf.mjs'), '--port', String(PORT)];
+const wfArgs = [path.join(ROOT, 'dev', CHROME ? 'cr.mjs' : 'wf.mjs'), '--port', String(PORT)];
 if (!HEADED) wfArgs.push('--headless');
 const wf = spawn(process.execPath, wfArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 let wfOut = '';

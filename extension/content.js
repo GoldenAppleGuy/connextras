@@ -792,10 +792,14 @@
   const META_MIGRATED_IDS = 'meta:migratedIds';
   const LEGACY_KEY = 'cw-times';
 
+  // Firefox: browser.storage; Chrome/Edge: chrome.storage (promise-based in
+  // MV3, same get/set/remove/onChanged). Without either (dev harness page),
+  // the localStorage fallback below.
   const extStorage = (() => {
     try {
-      if (typeof browser !== 'undefined' && browser.storage && browser.storage.local)
-        return browser.storage;
+      for (const api of [globalThis.browser, globalThis.chrome]) {
+        if (api && api.storage && api.storage.local && api.storage.onChanged) return api.storage;
+      }
     } catch (_) {}
     return null;
   })();
